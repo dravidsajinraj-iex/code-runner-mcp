@@ -1,0 +1,36 @@
+{
+	"name": "code-runner-mcp",
+	"version": "1.0.0",
+	"description": "Secure MCP server for executing JavaScript and Python code",
+	"main": "dist/index.js",
+	"module": "./src/index.ts",
+	"type": "module",
+	"scripts": {
+		"build": "tsc",
+		"start": "node dist/index.js",
+		"dev": "npx @smithery/cli dev",
+		"test": "jest"
+	},
+	"keywords": [
+		"mcp",
+		"code-execution",
+		"javascript",
+		"python",
+		"security"
+	],
+	"author": "",
+	"license": "ISC",
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.12.1",
+		"vm2": "^3.9.19",
+		"zod": "^3.25.46"
+	},
+	"devDependencies": {
+		"@smithery/cli": "^1.2.4",
+		"@types/jest": "^29.0.0",
+		"@types/node": "^20.0.0",
+		"jest": "^29.0.0",
+		"tsx": "^4.19.4",
+		"typescript": "^5.0.0"
+	}
+}
