@@ -20,6 +20,23 @@ export default function createStatelessServer({
 }: {
   config: z.infer<typeof configSchema>;
 }) {
+  // Add global error handlers to prevent server crashes
+  process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
+    if (config.debug) {
+      console.error('Stack trace:', error.stack);
+    }
+    // Don't exit the process, just log the error
+  });
+
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    if (config.debug) {
+      console.error('Full error:', reason);
+    }
+    // Don't exit the process, just log the error
+  });
+
   const server = new McpServer({
     name: "Code Runner MCP",
     version: "1.0.0",
@@ -45,7 +62,23 @@ export default function createStatelessServer({
       const startTime = Date.now();
       
       try {
-        // Validate input parameters
+        // Validate input parameters with additional safety checks
+        if (!language || !code) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "validation_error",
+                  message: "Missing required parameters: language and code are required",
+                  executionTime: Date.now() - startTime
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
         const validation = InputValidator.validateExecutionOptions({
           language,
           code,
@@ -65,19 +98,37 @@ export default function createStatelessServer({
                   type: "validation_error",
                   message: "Input validation failed",
                   errors: validation.errors,
-                  warnings: validation.warnings
+                  warnings: validation.warnings,
+                  executionTime: Date.now() - startTime
                 }, null, 2)
               }
             ]
           };
         }
 
-        // Language-specific validation
+        // Language-specific validation with error handling
         let languageValidation;
-        if (language === 'javascript') {
-          languageValidation = InputValidator.validateJavaScriptCode(code);
-        } else {
-          languageValidation = InputValidator.validatePythonCode(code);
+        try {
+          if (language === 'javascript') {
+            languageValidation = InputValidator.validateJavaScriptCode(code);
+          } else {
+            languageValidation = InputValidator.validatePythonCode(code);
+          }
+        } catch (validationError: any) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "validation_error",
+                  message: "Code validation failed due to internal error",
+                  details: validationError.message,
+                  executionTime: Date.now() - startTime
+                }, null, 2)
+              }
+            ]
+          };
         }
 
         if (!languageValidation.isValid) {
@@ -90,22 +141,39 @@ export default function createStatelessServer({
                   type: "security_error",
                   message: "Code validation failed",
                   errors: languageValidation.errors,
-                  warnings: languageValidation.warnings
+                  warnings: languageValidation.warnings,
+                  executionTime: Date.now() - startTime
                 }, null, 2)
               }
             ]
           };
         }
 
-        // Validate and normalize timeout
-        const validatedTimeout = TimeoutValidator.validateTimeout(
-          timeout || config.maxExecutionTime
-        );
+        // Validate and normalize timeout with error handling
+        let validatedTimeout;
+        try {
+          validatedTimeout = TimeoutValidator.validateTimeout(
+            timeout || config.maxExecutionTime
+          );
+        } catch (timeoutError: any) {
+          validatedTimeout = config.maxExecutionTime;
+          if (config.debug) {
+            console.warn('Timeout validation failed, using default:', timeoutError.message);
+          }
+        }
 
-        // Validate and normalize memory limit
-        const validatedMemoryLimit = MemoryMonitor.validateMemoryLimit(
-          memoryLimit || config.maxMemoryUsage
-        );
+        // Validate and normalize memory limit with error handling
+        let validatedMemoryLimit;
+        try {
+          validatedMemoryLimit = MemoryMonitor.validateMemoryLimit(
+            memoryLimit || config.maxMemoryUsage
+          );
+        } catch (memoryError: any) {
+          validatedMemoryLimit = config.maxMemoryUsage * 1024 * 1024; // Convert to bytes
+          if (config.debug) {
+            console.warn('Memory limit validation failed, using default:', memoryError.message);
+          }
+        }
 
         // Prepare execution options
         const executionOptions = {
@@ -116,23 +184,71 @@ export default function createStatelessServer({
           enableNetworking: enableNetworking || config.enableNetworking
         };
 
-        // Execute code based on language
+        // Execute code based on language with comprehensive error handling
         let result;
-        if (language === 'javascript') {
-          result = await jsExecutor.execute(executionOptions);
-        } else {
-          result = await pythonExecutor.execute(executionOptions);
+        try {
+          if (language === 'javascript') {
+            result = await jsExecutor.execute(executionOptions);
+          } else {
+            result = await pythonExecutor.execute(executionOptions);
+          }
+        } catch (executionError: any) {
+          // Handle executor initialization or execution errors
+          const executionTime = Date.now() - startTime;
+          
+          if (config.debug) {
+            console.error(`Executor error for ${language}:`, executionError);
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "executor_error",
+                  message: `${language} executor failed to initialize or execute`,
+                  details: executionError.message,
+                  executionTime
+                }, null, 2)
+              }
+            ]
+          };
         }
 
-        // Sanitize output
-        if (result.success) {
-          result.output = OutputSanitizer.sanitizeOutput(result.output || '');
-          result.errorOutput = OutputSanitizer.sanitizeOutput(result.errorOutput || '');
-          result.returnValue = OutputSanitizer.sanitizeReturnValue(result.returnValue);
-        } else {
-          result.message = OutputSanitizer.sanitizeError(result.message || '');
-          result.details = OutputSanitizer.sanitizeError(result.details || '');
-          result.stack = OutputSanitizer.sanitizeStackTrace(result.stack || '');
+        // Ensure result is valid
+        if (!result || typeof result !== 'object') {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "internal_error",
+                  message: "Invalid execution result",
+                  executionTime: Date.now() - startTime
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        // Sanitize output with error handling
+        try {
+          if (result.success) {
+            result.output = OutputSanitizer.sanitizeOutput(result.output || '');
+            result.errorOutput = OutputSanitizer.sanitizeOutput(result.errorOutput || '');
+            result.returnValue = OutputSanitizer.sanitizeReturnValue(result.returnValue);
+          } else {
+            result.message = OutputSanitizer.sanitizeError(result.message || '');
+            result.details = OutputSanitizer.sanitizeError(result.details || '');
+            result.stack = OutputSanitizer.sanitizeStackTrace(result.stack || '');
+          }
+        } catch (sanitizeError: any) {
+          if (config.debug) {
+            console.warn('Output sanitization failed:', sanitizeError.message);
+          }
+          // Continue with unsanitized output rather than failing
         }
 
         // Add execution metadata
@@ -141,15 +257,22 @@ export default function createStatelessServer({
 
         // Log execution if debug mode is enabled
         if (config.debug) {
-          console.error(`Code execution completed: ${language}, success: ${result.success}, time: ${result.executionTime}ms`);
+          console.log(`Code execution completed: ${language}, success: ${result.success}, time: ${result.executionTime}ms`);
         }
 
-        // Check output safety
-        if (result.success && result.output) {
-          const safetyCheck = OutputSanitizer.validateOutputSafety(result.output);
-          if (!safetyCheck.safe && safetyCheck.issues.length > 0) {
-            result.warnings = safetyCheck.issues;
+        // Check output safety with error handling
+        try {
+          if (result.success && result.output) {
+            const safetyCheck = OutputSanitizer.validateOutputSafety(result.output);
+            if (!safetyCheck.safe && safetyCheck.issues.length > 0) {
+              result.warnings = safetyCheck.issues;
+            }
           }
+        } catch (safetyError: any) {
+          if (config.debug) {
+            console.warn('Output safety check failed:', safetyError.message);
+          }
+          // Continue without safety warnings rather than failing
         }
 
         return {
@@ -166,13 +289,15 @@ export default function createStatelessServer({
         
         // Log error if debug mode is enabled
         if (config.debug) {
-          console.error(`Code execution error: ${error.message}`);
+          console.error(`Unexpected error in code execution:`, error);
         }
 
+        // Create a safe error response that won't crash the server
         const errorResult = {
           success: false,
           type: "internal_error",
-          message: OutputSanitizer.createSafeErrorMessage(error, "Code execution failed"),
+          message: "An unexpected error occurred during code execution",
+          details: error?.message || "Unknown error",
           executionTime
         };
 
@@ -198,43 +323,45 @@ export default function createStatelessServer({
         supportedLanguages: [
           {
             name: "javascript",
-            version: "Node.js",
+            version: "Node.js VM",
             features: [
               "ES6+ syntax support",
               "Built-in modules (Math, Date, JSON, etc.)",
               "Console output capture",
               "Input handling via readline()",
               "Timeout protection",
-              "Memory limit enforcement"
+              "Secure sandbox execution"
             ],
             restrictions: [
               "No file system access",
               "No network access (unless enabled)",
               "No process spawning",
               "Limited setTimeout/setInterval",
-              "No require() or import statements"
+              "No require() or import statements",
+              "Sandboxed execution environment"
             ],
-            allowedModules: ["lodash", "moment", "crypto-js", "uuid", "date-fns"]
+            allowedModules: ["Built-in JavaScript objects and functions only"]
           },
           {
             name: "python",
-            version: "Pyodide (WebAssembly)",
+            version: "Python 3.x (Subprocess)",
             features: [
               "Python 3.x syntax support",
-              "NumPy, Pandas, Matplotlib support",
+              "Native Python execution",
               "Console output capture",
               "Input handling via input()",
               "Timeout protection",
-              "Memory limit enforcement"
+              "Memory limit enforcement",
+              "Secure subprocess isolation"
             ],
             restrictions: [
               "No file system access",
               "No network access",
               "No system module imports",
               "No subprocess execution",
-              "Limited to Pyodide environment"
+              "Blocked dangerous modules (os, sys, socket, etc.)"
             ],
-            allowedModules: ["numpy", "pandas", "matplotlib", "scipy", "math", "random", "datetime", "json"]
+            allowedModules: ["math", "random", "datetime", "json", "base64", "hashlib", "builtins", "collections", "itertools", "functools", "re"]
           }
         ],
         limits: {
