@@ -39,46 +39,10 @@ export class JavaScriptExecutor extends BaseExecutor {
     const timeout = options.timeout || this.config.maxExecutionTime;
 
     try {
-      // Try to use vm2 if available, otherwise use Node.js vm
-      let VM: any;
-      try {
-        const vm2Module = await import('vm2');
-        VM = vm2Module.VM;
-      } catch (error) {
-        // Fallback to Node.js vm module
-        const vm = await import('vm');
-        return this.executeWithNodeVM(vm, options, startTime, timeout);
-      }
-
-      // Create secure VM context
-      const vm = new VM({
-        timeout,
-        sandbox: this.createSandbox(options.input),
-        eval: false,
-        wasm: false,
-        fixAsync: true
-      });
-
-      // Wrap code to capture output and return value
-      const wrappedCode = this.wrapCode(options.code);
-
-      // Execute with timeout
-      const result = await this.createTimeoutPromise(
-        this.executeInSecureVM(vm, wrappedCode),
-        timeout
-      );
-
-      const executionTime = Date.now() - startTime;
-
-      return {
-        success: true,
-        output: result.output || '',
-        errorOutput: result.errorOutput || '',
-        returnValue: result.returnValue,
-        executionTime,
-        memoryUsed: this.estimateMemoryUsage(result),
-        language: 'javascript'
-      };
+      // Use Node.js vm module directly for better compatibility
+      // VM2 has compatibility issues with ES modules in some environments
+      const nodeVm = await import('vm');
+      return this.executeWithNodeVM(nodeVm, options, startTime, timeout);
 
     } catch (error: any) {
       const executionTime = Date.now() - startTime;
@@ -266,16 +230,6 @@ export class JavaScriptExecutor extends BaseExecutor {
     `;
   }
 
-  private async executeInSecureVM(vm: any, code: string): Promise<any> {
-    return new Promise((resolve, reject) => {
-      try {
-        const result = vm.run(code);
-        resolve(result);
-      } catch (error) {
-        reject(error);
-      }
-    });
-  }
 
   private sanitizeStackTrace(stack?: string): string {
     if (!stack) return '';
