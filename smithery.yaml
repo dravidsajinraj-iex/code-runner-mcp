@@ -2,4 +2,4 @@ runtime: docker
 build:
   dockerBuildPath: "."
 startCommand:
-  type: "stdio"
+  type: stdio
