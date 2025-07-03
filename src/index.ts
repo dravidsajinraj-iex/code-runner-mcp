@@ -313,6 +313,366 @@ export default function createStatelessServer({
     }
   );
 
+  // Add the execute_code_with_variables tool for dynamic input variables
+  server.tool(
+    "execute_code_with_variables",
+    "Execute JavaScript or Python code with dynamic input variables that can be defined and passed as key-value pairs",
+    {
+      language: z.enum(['javascript', 'python']).describe("Programming language to execute"),
+      code: z.string().describe("Code to execute"),
+      variables: z.union([
+        z.record(z.string(), z.any()),
+        z.string()
+      ]).optional().describe("Dynamic input variables as key-value pairs. Can be a JSON object or a JSON string (e.g., {\"name\": \"John\", \"age\": 25, \"items\": [1,2,3]} or \"{\\\"name\\\": \\\"John\\\", \\\"age\\\": 25}\")"),
+      input: z.string().optional().describe("Additional input data for the program (stdin)"),
+      timeout: z.number().optional().describe("Execution timeout in milliseconds (max 60000)"),
+      memoryLimit: z.number().optional().describe("Memory limit in MB (max 512)"),
+      enableNetworking: z.boolean().optional().describe("Enable network access for this execution")
+    },
+    async ({ language, code, variables, input, timeout, memoryLimit, enableNetworking }) => {
+      const startTime = Date.now();
+      
+      try {
+        // Validate input parameters with additional safety checks
+        if (!language || !code) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "validation_error",
+                  message: "Missing required parameters: language and code are required",
+                  executionTime: Date.now() - startTime
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        // Process variables and inject them into the code
+        let processedCode = code;
+        let processedInput = input;
+        let parsedVariables: Record<string, any> = {};
+
+        // Handle variables - could be object or JSON string
+        if (variables) {
+          try {
+            if (typeof variables === 'string') {
+              // Parse JSON string
+              parsedVariables = JSON.parse(variables);
+            } else {
+              // Already an object
+              parsedVariables = variables;
+            }
+          } catch (parseError: any) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    success: false,
+                    type: "validation_error",
+                    message: `Invalid variables JSON: ${parseError.message}`,
+                    executionTime: Date.now() - startTime
+                  }, null, 2)
+                }
+              ]
+            };
+          }
+        }
+
+        if (parsedVariables && Object.keys(parsedVariables).length > 0) {
+          // Validate variable names (must be valid identifiers)
+          for (const varName of Object.keys(parsedVariables)) {
+            if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(varName)) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      success: false,
+                      type: "validation_error",
+                      message: `Invalid variable name: '${varName}'. Variable names must be valid identifiers.`,
+                      executionTime: Date.now() - startTime
+                    }, null, 2)
+                  }
+                ]
+              };
+            }
+          }
+
+          // Inject variables into the code based on language
+          if (language === 'javascript') {
+            const variableDeclarations = Object.entries(parsedVariables)
+              .map(([key, value]) => `const ${key} = ${JSON.stringify(value)};`)
+              .join('\n');
+            processedCode = `${variableDeclarations}\n\n${code}`;
+          } else if (language === 'python') {
+            // For Python, use a safer variable injection method
+            const variableDeclarations = Object.entries(parsedVariables)
+              .map(([key, value]) => {
+                // Handle different types more safely
+                if (typeof value === 'string') {
+                  return `${key} = ${JSON.stringify(value)}`;
+                } else if (typeof value === 'number' || typeof value === 'boolean') {
+                  return `${key} = ${JSON.stringify(value)}`;
+                } else if (value === null) {
+                  return `${key} = None`;
+                } else if (Array.isArray(value)) {
+                  return `${key} = ${JSON.stringify(value)}`;
+                } else if (typeof value === 'object') {
+                  // Convert JavaScript objects to Python dictionaries
+                  const pythonDict = JSON.stringify(value).replace(/true/g, 'True').replace(/false/g, 'False').replace(/null/g, 'None');
+                  return `${key} = ${pythonDict}`;
+                } else {
+                  return `${key} = ${JSON.stringify(value)}`;
+                }
+              })
+              .join('\n');
+            processedCode = `${variableDeclarations}\n\n${code}`;
+          }
+        }
+
+        const validation = InputValidator.validateExecutionOptions({
+          language,
+          code: processedCode,
+          input: processedInput,
+          timeout,
+          memoryLimit,
+          enableNetworking
+        });
+
+        if (!validation.isValid) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "validation_error",
+                  message: "Input validation failed",
+                  errors: validation.errors,
+                  warnings: validation.warnings,
+                  executionTime: Date.now() - startTime
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        // Language-specific validation with error handling
+        let languageValidation;
+        try {
+          if (language === 'javascript') {
+            languageValidation = InputValidator.validateJavaScriptCode(processedCode);
+          } else {
+            languageValidation = InputValidator.validatePythonCode(processedCode);
+          }
+        } catch (validationError: any) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "validation_error",
+                  message: "Code validation failed due to internal error",
+                  details: validationError.message,
+                  executionTime: Date.now() - startTime
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        if (!languageValidation.isValid) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "security_error",
+                  message: "Code validation failed",
+                  errors: languageValidation.errors,
+                  warnings: languageValidation.warnings,
+                  executionTime: Date.now() - startTime
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        // Validate and normalize timeout with error handling
+        let validatedTimeout;
+        try {
+          validatedTimeout = TimeoutValidator.validateTimeout(
+            timeout || config.maxExecutionTime
+          );
+        } catch (timeoutError: any) {
+          validatedTimeout = config.maxExecutionTime;
+          if (config.debug) {
+            console.warn('Timeout validation failed, using default:', timeoutError.message);
+          }
+        }
+
+        // Validate and normalize memory limit with error handling
+        let validatedMemoryLimit;
+        try {
+          validatedMemoryLimit = MemoryMonitor.validateMemoryLimit(
+            memoryLimit || config.maxMemoryUsage
+          );
+        } catch (memoryError: any) {
+          validatedMemoryLimit = config.maxMemoryUsage * 1024 * 1024; // Convert to bytes
+          if (config.debug) {
+            console.warn('Memory limit validation failed, using default:', memoryError.message);
+          }
+        }
+
+        // Prepare execution options
+        const executionOptions = {
+          code: processedCode,
+          input: processedInput,
+          timeout: validatedTimeout,
+          memoryLimit: validatedMemoryLimit / (1024 * 1024), // Convert back to MB
+          enableNetworking: enableNetworking || config.enableNetworking
+        };
+
+        // Execute code based on language with comprehensive error handling
+        let result;
+        try {
+          if (language === 'javascript') {
+            result = await jsExecutor.execute(executionOptions);
+          } else {
+            result = await pythonExecutor.execute(executionOptions);
+          }
+        } catch (executionError: any) {
+          // Handle executor initialization or execution errors
+          const executionTime = Date.now() - startTime;
+          
+          if (config.debug) {
+            console.error(`Executor error for ${language}:`, executionError);
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "executor_error",
+                  message: `${language} executor failed to initialize or execute`,
+                  details: executionError.message,
+                  executionTime
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        // Ensure result is valid
+        if (!result || typeof result !== 'object') {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: false,
+                  type: "internal_error",
+                  message: "Invalid execution result",
+                  executionTime: Date.now() - startTime
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        // Sanitize output with error handling
+        try {
+          if (result.success) {
+            result.output = OutputSanitizer.sanitizeOutput(result.output || '');
+            result.errorOutput = OutputSanitizer.sanitizeOutput(result.errorOutput || '');
+            result.returnValue = OutputSanitizer.sanitizeReturnValue(result.returnValue);
+          } else {
+            result.message = OutputSanitizer.sanitizeError(result.message || '');
+            result.details = OutputSanitizer.sanitizeError(result.details || '');
+            result.stack = OutputSanitizer.sanitizeStackTrace(result.stack || '');
+          }
+        } catch (sanitizeError: any) {
+          if (config.debug) {
+            console.warn('Output sanitization failed:', sanitizeError.message);
+          }
+          // Continue with unsanitized output rather than failing
+        }
+
+        // Add execution metadata
+        const executionTime = Date.now() - startTime;
+        result.executionTime = result.executionTime || executionTime;
+
+        // Add information about injected variables
+        if (parsedVariables && Object.keys(parsedVariables).length > 0) {
+          result.injectedVariables = parsedVariables;
+        }
+
+        // Log execution if debug mode is enabled
+        if (config.debug) {
+          console.log(`Code execution completed: ${language}, success: ${result.success}, time: ${result.executionTime}ms, variables: ${Object.keys(parsedVariables || {}).length}`);
+        }
+
+        // Check output safety with error handling
+        try {
+          if (result.success && result.output) {
+            const safetyCheck = OutputSanitizer.validateOutputSafety(result.output);
+            if (!safetyCheck.safe && safetyCheck.issues.length > 0) {
+              result.warnings = safetyCheck.issues;
+            }
+          }
+        } catch (safetyError: any) {
+          if (config.debug) {
+            console.warn('Output safety check failed:', safetyError.message);
+          }
+          // Continue without safety warnings rather than failing
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2)
+            }
+          ]
+        };
+
+      } catch (error: any) {
+        const executionTime = Date.now() - startTime;
+        
+        // Log error if debug mode is enabled
+        if (config.debug) {
+          console.error(`Unexpected error in code execution with variables:`, error);
+        }
+
+        // Create a safe error response that won't crash the server
+        const errorResult = {
+          success: false,
+          type: "internal_error",
+          message: "An unexpected error occurred during code execution with variables",
+          details: error?.message || "Unknown error",
+          executionTime
+        };
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(errorResult, null, 2)
+            }
+          ]
+        };
+      }
+    }
+  );
+
   // Add a tool to get supported languages and their capabilities
   server.tool(
     "get_capabilities",
@@ -329,6 +689,7 @@ export default function createStatelessServer({
               "Built-in modules (Math, Date, JSON, etc.)",
               "Console output capture",
               "Input handling via readline()",
+              "Dynamic variable injection",
               "Timeout protection",
               "Secure sandbox execution"
             ],
@@ -350,6 +711,7 @@ export default function createStatelessServer({
               "Native Python execution",
               "Console output capture",
               "Input handling via input()",
+              "Dynamic variable injection",
               "Timeout protection",
               "Memory limit enforcement",
               "Secure subprocess isolation"
@@ -362,6 +724,21 @@ export default function createStatelessServer({
               "Blocked dangerous modules (os, sys, socket, etc.)"
             ],
             allowedModules: ["math", "random", "datetime", "json", "base64", "hashlib", "builtins", "collections", "itertools", "functools", "re"]
+          }
+        ],
+        tools: [
+          {
+            name: "execute_code",
+            description: "Execute code with basic input/output handling"
+          },
+          {
+            name: "execute_code_with_variables",
+            description: "Execute code with dynamic variable injection - allows passing multiple input variables as key-value pairs",
+            variableSupport: {
+              types: ["string", "number", "boolean", "array", "object"],
+              validation: "Variable names must be valid identifiers",
+              injection: "Variables are automatically injected at the beginning of the code"
+            }
           }
         ],
         limits: {

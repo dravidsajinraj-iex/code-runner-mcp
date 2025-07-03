@@ -20,8 +20,8 @@ export class JavaScriptExecutor extends BaseExecutor {
         /global\./,
         /eval\s*\(/,
         /new\s+Function\s*\(/,
-        /while\s*\(\s*true\s*\)/,
-        /for\s*\(\s*;\s*;\s*\)/,
+        /while\s*\(\s*true\s*\)\s*{/,
+        /for\s*\(\s*;\s*;\s*\)\s*{/,
         /setInterval|setTimeout/
       ]
     });
@@ -106,10 +106,24 @@ export class JavaScriptExecutor extends BaseExecutor {
       const context = vm.createContext(this.createSandbox(options.input));
       const wrappedCode = this.wrapCode(options.code);
       
-      const result = await this.createTimeoutPromise(
-        Promise.resolve(vm.runInContext(wrappedCode, context, { timeout })),
-        timeout
-      );
+      // Use both VM timeout and Promise timeout for better reliability
+      const vmPromise = new Promise((resolve, reject) => {
+        try {
+          const result = vm.runInContext(wrappedCode, context, {
+            timeout: timeout,
+            breakOnSigint: true
+          });
+          resolve(result);
+        } catch (error: any) {
+          if (error.message.includes('Script execution timed out')) {
+            reject(new Error('TIMEOUT'));
+          } else {
+            reject(error);
+          }
+        }
+      });
+      
+      const result = await this.createTimeoutPromise(vmPromise, timeout) as any;
 
       const executionTime = Date.now() - startTime;
 
@@ -124,6 +138,16 @@ export class JavaScriptExecutor extends BaseExecutor {
       };
     } catch (error: any) {
       const executionTime = Date.now() - startTime;
+      
+      if (error.message === 'TIMEOUT' || error.message.includes('Script execution timed out')) {
+        return {
+          success: false,
+          type: 'timeout_error',
+          message: `Code execution timed out after ${timeout}ms`,
+          executionTime
+        };
+      }
+      
       return {
         success: false,
         type: 'runtime_error',
@@ -143,9 +167,12 @@ export class JavaScriptExecutor extends BaseExecutor {
     return {
       console: {
         log: (...args: any[]) => {
-          const output = args.map(arg => 
-            typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
-          ).join(' ');
+          const output = args.map(arg => {
+            if (Array.isArray(arg)) {
+              return `[ ${arg.join(', ')} ]`;
+            }
+            return typeof arg === 'object' ? JSON.stringify(arg) : String(arg);
+          }).join(' ');
           outputCapture.push(output);
         },
         error: (...args: any[]) => {

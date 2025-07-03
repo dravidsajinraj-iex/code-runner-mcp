@@ -19,13 +19,13 @@ export class PythonExecutor extends BaseExecutor {
   constructor() {
     super({
       blockedPatterns: [
-        /import\s+(os|sys|subprocess|socket|urllib)/,
-        /from\s+(os|sys|subprocess|socket|urllib)/,
+        /import\s+(os|sys|subprocess|socket|urllib|urllib2|urllib3)\b/,
+        /from\s+(os|sys|subprocess|socket|urllib|urllib2|urllib3)\b/,
         /open\s*\(/,
         /with\s+open\s*\(/,
         /__import__\s*\(/,
-        /while\s+True\s*:/,
-        /for\s+.*\s+in\s+range\s*\(\s*\d{6,}\s*\)/
+        /while\s+True\s*:\s*$/,
+        /for\s+.*\s+in\s+range\s*\(\s*\d{7,}\s*\)/
       ]
     });
   }
@@ -129,9 +129,31 @@ original_exec = builtins.exec
 original_eval = builtins.eval
 
 def secure_import(name, globals=None, locals=None, fromlist=(), level=0):
+    # Allow internal Python modules (start with underscore)
+    if name.startswith('_') and not name.startswith('__'):
+        # Allow internal modules like _io, _collections, etc.
+        internal_safe_modules = ['_io', '_collections', '_functools', '_operator', '_thread', '_weakref', '_locale', '_codecs', '_sre']
+        if name in internal_safe_modules or any(name.startswith(safe + '.') for safe in internal_safe_modules):
+            return original_import(name, globals, locals, fromlist, level)
+    
+    # Allow specific safe modules
+    allowed_modules = ${JSON.stringify(this.allowedModules)}
+    
+    # Check if the module or its parent is explicitly allowed
+    if name in allowed_modules or any(name.startswith(allowed + '.') for allowed in allowed_modules):
+        return original_import(name, globals, locals, fromlist, level)
+    
+    # Block dangerous modules first
     if name in blocked_modules or any(name.startswith(blocked + '.') for blocked in blocked_modules):
         raise SecurityError(f"Import of module '{name}' is not allowed")
-    return original_import(name, globals, locals, fromlist, level)
+    
+    # For other modules, check if they're safe built-ins
+    safe_builtins = ['builtins', 'collections', 'itertools', 'functools', 're', 'string', 'textwrap', 'unicodedata', 'codecs', 'io', 'contextlib', 'abc', 'types', 'copy', 'pickle', 'operator', 'weakref', 'threading', 'queue', 'heapq', 'bisect', 'array', 'struct', 'enum', 'decimal', 'fractions', 'statistics', 'cmath']
+    if name in safe_builtins:
+        return original_import(name, globals, locals, fromlist, level)
+    
+    # Block everything else
+    raise SecurityError(f"Import of module '{name}' is not allowed")
 
 builtins.__import__ = secure_import
 
@@ -141,15 +163,15 @@ def blocked_open(*args, **kwargs):
 
 builtins.open = blocked_open
 
-# Block exec and eval for user code
+# Block exec and eval for user code, but allow our internal usage
 def blocked_exec(*args, **kwargs):
     raise SecurityError("exec() is not allowed")
 
 def blocked_eval(*args, **kwargs):
     raise SecurityError("eval() is not allowed")
 
-builtins.exec = blocked_exec
-builtins.eval = blocked_eval
+# Only block exec/eval after we've executed the user code
+# We'll restore these functions after execution
 
 # Set up output capture
 stdout_capture = io.StringIO()
@@ -159,7 +181,17 @@ try:
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
         # Execute user code using the original exec function
         user_code = """${userCode.replace(/\\/g, '\\\\').replace(/"""/g, '\\"""')}"""
-        original_exec(user_code)
+        
+        # Block exec/eval during user code execution
+        builtins.exec = blocked_exec
+        builtins.eval = blocked_eval
+        
+        try:
+            original_exec(user_code)
+        finally:
+            # Restore original functions (though this won't matter since execution ends)
+            builtins.exec = original_exec
+            builtins.eval = original_eval
     
     # Print captured output
     output = stdout_capture.getvalue()
@@ -186,35 +218,44 @@ except Exception as e:
 
   private async executePythonSubprocess(code: string, input?: string): Promise<any> {
     return new Promise(async (resolve, reject) => {
+      let tempFile: string | null = null;
+      let pythonProcess: any = null;
+      
       try {
         // Create a temporary file for the Python code
-        const tempFile = join(tmpdir(), `python_exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.py`);
+        tempFile = join(tmpdir(), `python_exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.py`);
         await writeFile(tempFile, code);
 
-        const pythonProcess = spawn('python3', [tempFile], {
+        pythonProcess = spawn('python3', [tempFile], {
           stdio: ['pipe', 'pipe', 'pipe']
         });
 
         let stdout = '';
         let stderr = '';
+        let isResolved = false;
 
-        pythonProcess.stdout.on('data', (data) => {
+        pythonProcess.stdout.on('data', (data: any) => {
           stdout += data.toString();
         });
 
-        pythonProcess.stderr.on('data', (data) => {
+        pythonProcess.stderr.on('data', (data: any) => {
           stderr += data.toString();
         });
 
-        pythonProcess.on('close', async (code) => {
+        pythonProcess.on('close', async (exitCode: any) => {
+          if (isResolved) return;
+          isResolved = true;
+          
           // Clean up temp file
-          try {
-            await unlink(tempFile);
-          } catch (e) {
-            // Ignore cleanup errors
+          if (tempFile) {
+            try {
+              await unlink(tempFile);
+            } catch (e) {
+              // Ignore cleanup errors
+            }
           }
 
-          if (code === 0) {
+          if (exitCode === 0) {
             // Parse output
             let output = '';
             let errorOutput = '';
@@ -236,12 +277,17 @@ except Exception as e:
           }
         });
 
-        pythonProcess.on('error', async (error) => {
+        pythonProcess.on('error', async (error: any) => {
+          if (isResolved) return;
+          isResolved = true;
+          
           // Clean up temp file
-          try {
-            await unlink(tempFile);
-          } catch (e) {
-            // Ignore cleanup errors
+          if (tempFile) {
+            try {
+              await unlink(tempFile);
+            } catch (e) {
+              // Ignore cleanup errors
+            }
           }
           reject(error);
         });
@@ -253,6 +299,14 @@ except Exception as e:
         pythonProcess.stdin.end();
 
       } catch (error) {
+        // Clean up temp file if it was created
+        if (tempFile) {
+          try {
+            await unlink(tempFile);
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+        }
         reject(error);
       }
     });

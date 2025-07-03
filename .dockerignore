@@ -1,0 +1,107 @@
+# Node modules (will be installed in container)
+node_modules/
+
+# Build output (will be built in container)
+dist/
+
+# Development files
+.git/
+.gitignore
+.env*
+.vscode/
+.DS_Store
+
+# Test files
+src/tests/
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js
+jest.config.*
+coverage/
+
+# Documentation (keep essential docs for MCP server)
+docs/
+README.md
+CHANGELOG.md
+# Keep MCP-specific documentation
+!STDIO_USAGE.md
+!DYNAMIC_VARIABLES.md
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# IDE files
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+.nyc_output/
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# next.js build output
+.next
+
+# nuxt.js build output
+.nuxt
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/

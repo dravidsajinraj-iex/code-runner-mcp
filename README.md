@@ -2,9 +2,19 @@
 
 A secure Model Context Protocol (MCP) server for executing JavaScript and Python code in isolated environments with comprehensive security restrictions.
 
+## Transport Support
+
+This MCP server supports two transport methods:
+
+- **Smithery Transport**: For development and testing with the Smithery playground
+- **Stdio Transport**: For integration with MCP clients like Claude Desktop
+
+Both transports provide the same functionality and security features.
+
 ## Features
 
 - **Multi-language Support**: Execute JavaScript and Python code
+- **Dynamic Variables**: Pass multiple input variables as key-value pairs
 - **Security-First Design**: Comprehensive blocking of dangerous operations
 - **Timeout Protection**: Configurable execution timeouts
 - **Memory Monitoring**: Basic memory usage estimation
@@ -48,7 +58,7 @@ npm install
 
 ## Usage
 
-### Development
+### Development (Smithery)
 ```bash
 npm run dev
 ```
@@ -58,10 +68,21 @@ npm run dev
 npm run build
 ```
 
-### Start
+### Start (Smithery)
 ```bash
 npm start
 ```
+
+### Stdio Mode (MCP Clients)
+```bash
+# Start stdio server for MCP clients
+npm run start:stdio
+
+# Or run directly
+node dist/stdio.js
+```
+
+For detailed stdio usage and MCP client integration, see [STDIO_USAGE.md](./STDIO_USAGE.md).
 
 ## Configuration
 
@@ -77,11 +98,42 @@ The server uses the following default configurations:
 
 Execute code in the specified language with optional input.
 
+**Tool:** `execute_code`
+
 **Parameters:**
 - `language`: "javascript" or "python"
 - `code`: The code to execute
 - `input`: Optional stdin input for the code
 - `timeout`: Optional timeout in milliseconds
+- `memoryLimit`: Optional memory limit in MB
+- `enableNetworking`: Optional network access flag
+
+### Execute Code with Dynamic Variables
+
+Execute code with multiple input variables passed as key-value pairs.
+
+**Tool:** `execute_code_with_variables`
+
+**Parameters:**
+- `language`: "javascript" or "python"
+- `code`: The code to execute
+- `variables`: Optional object with dynamic input variables
+- `input`: Optional stdin input for the code
+- `timeout`: Optional timeout in milliseconds
+- `memoryLimit`: Optional memory limit in MB
+- `enableNetworking`: Optional network access flag
+
+**Example:**
+```json
+{
+  "language": "javascript",
+  "code": "console.log(`Hello ${name}, you are ${age} years old!`);",
+  "variables": {
+    "name": "John",
+    "age": 25
+  }
+}
+```
 
 **Response:**
 - `success`: Boolean indicating execution success
@@ -90,6 +142,14 @@ Execute code in the specified language with optional input.
 - `executionTime`: Time taken to execute in milliseconds
 - `memoryUsed`: Estimated memory usage
 - `language`: The language that was executed
+- `injectedVariables`: Variables that were injected (for variables tool)
+
+### Other Tools
+
+- `get_capabilities`: Get information about supported languages and features
+- `validate_code`: Validate code without executing it
+
+For detailed information about dynamic variables, see [DYNAMIC_VARIABLES.md](./DYNAMIC_VARIABLES.md).
 
 ## Architecture
 
@@ -182,6 +242,14 @@ ISC License
 ## Changelog
 
 ### Recent Updates
+
+#### Dynamic Variables Feature
+- **Added**: New `execute_code_with_variables` tool for dynamic input variables
+- **Feature**: Support for multiple data types (strings, numbers, booleans, arrays, objects)
+- **Feature**: Automatic variable injection into code before execution
+- **Feature**: Variable name validation for security
+- **Feature**: Enhanced capabilities reporting with variable support information
+- **Documentation**: Comprehensive guide in DYNAMIC_VARIABLES.md
 
 #### Python Executor Rewrite
 - **Fixed**: ENOENT errors when loading Pyodide WebAssembly files
