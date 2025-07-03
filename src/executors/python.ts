@@ -75,6 +75,17 @@ export class PythonExecutor extends BaseExecutor {
         };
       }
 
+      // Check for Python executable not found
+      if (error.code === 'ENOENT' || error.message.includes('No Python executable found')) {
+        return {
+          success: false,
+          type: 'runtime_error',
+          message: 'Python executable not found. Please ensure Python is installed and available in your PATH.',
+          details: error.message,
+          executionTime
+        };
+      }
+
       if (error.message.includes('SyntaxError')) {
         const lineMatch = error.message.match(/line (\d+)/);
         const line = lineMatch ? parseInt(lineMatch[1]) : undefined;
@@ -105,7 +116,8 @@ export class PythonExecutor extends BaseExecutor {
         type: 'runtime_error',
         message: error.message || 'Runtime error occurred',
         stack: this.sanitizeStackTrace(error.stack),
-        executionTime
+        executionTime,
+        details: error.code === 'ENOENT' ? 'Python executable not found in PATH' : undefined
       };
     }
   }
@@ -216,6 +228,32 @@ except Exception as e:
 `;
   }
 
+  private async findPythonExecutable(): Promise<string> {
+    const { spawn } = await import('child_process');
+    const { promisify } = await import('util');
+    const execFile = promisify((await import('child_process')).execFile);
+    
+    // List of possible Python executables to try
+    const pythonCandidates = ['python3', 'python', 'python3.12', 'python3.11', 'python3.10', 'python3.9'];
+    
+    for (const candidate of pythonCandidates) {
+      try {
+        // Try to execute the candidate with --version to check if it exists and works
+        await execFile(candidate, ['--version'], { timeout: 5000 });
+        return candidate;
+      } catch (error) {
+        // Continue to next candidate if this one fails
+        continue;
+      }
+    }
+    
+    // If no Python executable is found, throw an error with helpful message
+    throw new Error(
+      'No Python executable found. Please ensure Python is installed and available in your PATH. ' +
+      'Tried: ' + pythonCandidates.join(', ')
+    );
+  }
+
   private async executePythonSubprocess(code: string, input?: string): Promise<any> {
     return new Promise(async (resolve, reject) => {
       let tempFile: string | null = null;
@@ -226,7 +264,10 @@ except Exception as e:
         tempFile = join(tmpdir(), `python_exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.py`);
         await writeFile(tempFile, code);
 
-        pythonProcess = spawn('python3', [tempFile], {
+        // Try different Python executable names
+        const pythonExecutable = await this.findPythonExecutable();
+        
+        pythonProcess = spawn(pythonExecutable, [tempFile], {
           stdio: ['pipe', 'pipe', 'pipe']
         });
 
