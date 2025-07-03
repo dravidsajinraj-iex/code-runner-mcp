@@ -14,6 +14,7 @@ export interface ExecutionResult {
   partialOutput?: string;
   stack?: string;
   warnings?: string[];
+  injectedVariables?: Record<string, any>;
 }
 
 export interface ExecutionOptions {

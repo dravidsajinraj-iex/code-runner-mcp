@@ -127,12 +127,13 @@ export class InputValidator {
 
     // Check for dangerous patterns
     const dangerousPatterns = [
-      { pattern: /import\s+(os|sys|subprocess|socket|urllib)/g, message: 'System module imports are not allowed' },
-      { pattern: /from\s+(os|sys|subprocess|socket|urllib)/g, message: 'System module imports are not allowed' },
+      { pattern: /import\s+(os|sys|subprocess|socket|urllib|urllib2|urllib3)\b/g, message: 'System module imports are not allowed' },
+      { pattern: /from\s+(os|sys|subprocess|socket|urllib|urllib2|urllib3)\b/g, message: 'System module imports are not allowed' },
       { pattern: /open\s*\(/g, message: 'File operations are not allowed' },
       { pattern: /with\s+open\s*\(/g, message: 'File operations are not allowed' },
-      { pattern: /exec\s*\(/g, message: 'exec() is not allowed' },
-      { pattern: /eval\s*\(/g, message: 'eval() is not allowed' },
+      // Note: exec() and eval() are handled by the Python executor's security wrapper
+      // { pattern: /exec\s*\(/g, message: 'exec() is not allowed' },
+      // { pattern: /eval\s*\(/g, message: 'eval() is not allowed' },
       { pattern: /__import__\s*\(/g, message: '__import__() is not allowed' },
       { pattern: /while\s+True\s*:/g, message: 'Infinite loops are not allowed' }
     ];

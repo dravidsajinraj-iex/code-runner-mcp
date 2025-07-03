@@ -19,8 +19,8 @@ export class PythonExecutor extends BaseExecutor {
   constructor() {
     super({
       blockedPatterns: [
-        /import\s+(os|sys|subprocess|socket|urllib)/,
-        /from\s+(os|sys|subprocess|socket|urllib)/,
+        /import\s+(os|sys|subprocess|socket|urllib|urllib2|urllib3)\b/,
+        /from\s+(os|sys|subprocess|socket|urllib|urllib2|urllib3)\b/,
         /open\s*\(/,
         /with\s+open\s*\(/,
         /__import__\s*\(/,
@@ -129,9 +129,31 @@ original_exec = builtins.exec
 original_eval = builtins.eval
 
 def secure_import(name, globals=None, locals=None, fromlist=(), level=0):
+    # Allow internal Python modules (start with underscore)
+    if name.startswith('_') and not name.startswith('__'):
+        # Allow internal modules like _io, _collections, etc.
+        internal_safe_modules = ['_io', '_collections', '_functools', '_operator', '_thread', '_weakref', '_locale', '_codecs', '_sre']
+        if name in internal_safe_modules or any(name.startswith(safe + '.') for safe in internal_safe_modules):
+            return original_import(name, globals, locals, fromlist, level)
+    
+    # Allow specific safe modules
+    allowed_modules = ${JSON.stringify(this.allowedModules)}
+    
+    # Check if the module or its parent is explicitly allowed
+    if name in allowed_modules or any(name.startswith(allowed + '.') for allowed in allowed_modules):
+        return original_import(name, globals, locals, fromlist, level)
+    
+    # Block dangerous modules first
     if name in blocked_modules or any(name.startswith(blocked + '.') for blocked in blocked_modules):
         raise SecurityError(f"Import of module '{name}' is not allowed")
-    return original_import(name, globals, locals, fromlist, level)
+    
+    # For other modules, check if they're safe built-ins
+    safe_builtins = ['builtins', 'collections', 'itertools', 'functools', 're', 'string', 'textwrap', 'unicodedata', 'codecs', 'io', 'contextlib', 'abc', 'types', 'copy', 'pickle', 'operator', 'weakref', 'threading', 'queue', 'heapq', 'bisect', 'array', 'struct', 'enum', 'decimal', 'fractions', 'statistics', 'cmath']
+    if name in safe_builtins:
+        return original_import(name, globals, locals, fromlist, level)
+    
+    # Block everything else
+    raise SecurityError(f"Import of module '{name}' is not allowed")
 
 builtins.__import__ = secure_import
 
@@ -141,15 +163,15 @@ def blocked_open(*args, **kwargs):
 
 builtins.open = blocked_open
 
-# Block exec and eval for user code
+# Block exec and eval for user code, but allow our internal usage
 def blocked_exec(*args, **kwargs):
     raise SecurityError("exec() is not allowed")
 
 def blocked_eval(*args, **kwargs):
     raise SecurityError("eval() is not allowed")
 
-builtins.exec = blocked_exec
-builtins.eval = blocked_eval
+# Only block exec/eval after we've executed the user code
+# We'll restore these functions after execution
 
 # Set up output capture
 stdout_capture = io.StringIO()
@@ -159,7 +181,17 @@ try:
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
         # Execute user code using the original exec function
         user_code = """${userCode.replace(/\\/g, '\\\\').replace(/"""/g, '\\"""')}"""
-        original_exec(user_code)
+        
+        # Block exec/eval during user code execution
+        builtins.exec = blocked_exec
+        builtins.eval = blocked_eval
+        
+        try:
+            original_exec(user_code)
+        finally:
+            # Restore original functions (though this won't matter since execution ends)
+            builtins.exec = original_exec
+            builtins.eval = original_eval
     
     # Print captured output
     output = stdout_capture.getvalue()
