@@ -23,8 +23,6 @@ export class PythonExecutor extends BaseExecutor {
         /from\s+(os|sys|subprocess|socket|urllib)/,
         /open\s*\(/,
         /with\s+open\s*\(/,
-        /exec\s*\(/,
-        /eval\s*\(/,
         /__import__\s*\(/,
         /while\s+True\s*:/,
         /for\s+.*\s+in\s+range\s*\(\s*\d{6,}\s*\)/
@@ -125,7 +123,10 @@ blocked_modules = ${JSON.stringify(this.blockedModules)}
 class SecurityError(Exception):
     pass
 
+# Save original functions before blocking them
 original_import = builtins.__import__
+original_exec = builtins.exec
+original_eval = builtins.eval
 
 def secure_import(name, globals=None, locals=None, fromlist=(), level=0):
     if name in blocked_modules or any(name.startswith(blocked + '.') for blocked in blocked_modules):
@@ -140,7 +141,7 @@ def blocked_open(*args, **kwargs):
 
 builtins.open = blocked_open
 
-# Block exec and eval
+# Block exec and eval for user code
 def blocked_exec(*args, **kwargs):
     raise SecurityError("exec() is not allowed")
 
@@ -156,8 +157,9 @@ stderr_capture = io.StringIO()
 
 try:
     with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-        # Execute user code
-        exec("""${userCode.replace(/"/g, '\\"').replace(/\n/g, '\\n')}""")
+        # Execute user code using the original exec function
+        user_code = """${userCode.replace(/\\/g, '\\\\').replace(/"""/g, '\\"""')}"""
+        original_exec(user_code)
     
     # Print captured output
     output = stdout_capture.getvalue()
