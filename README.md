@@ -2,6 +2,15 @@
 
 A secure Model Context Protocol (MCP) server for executing JavaScript and Python code in isolated environments with comprehensive security restrictions.
 
+## Transport Support
+
+This MCP server supports two transport methods:
+
+- **Smithery Transport**: For development and testing with the Smithery playground
+- **Stdio Transport**: For integration with MCP clients like Claude Desktop
+
+Both transports provide the same functionality and security features.
+
 ## Features
 
 - **Multi-language Support**: Execute JavaScript and Python code
@@ -49,7 +58,7 @@ npm install
 
 ## Usage
 
-### Development
+### Development (Smithery)
 ```bash
 npm run dev
 ```
@@ -59,10 +68,21 @@ npm run dev
 npm run build
 ```
 
-### Start
+### Start (Smithery)
 ```bash
 npm start
 ```
+
+### Stdio Mode (MCP Clients)
+```bash
+# Start stdio server for MCP clients
+npm run start:stdio
+
+# Or run directly
+node dist/stdio.js
+```
+
+For detailed stdio usage and MCP client integration, see [STDIO_USAGE.md](./STDIO_USAGE.md).
 
 ## Configuration
 

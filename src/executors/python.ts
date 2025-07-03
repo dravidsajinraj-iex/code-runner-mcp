@@ -24,8 +24,8 @@ export class PythonExecutor extends BaseExecutor {
         /open\s*\(/,
         /with\s+open\s*\(/,
         /__import__\s*\(/,
-        /while\s+True\s*:/,
-        /for\s+.*\s+in\s+range\s*\(\s*\d{6,}\s*\)/
+        /while\s+True\s*:\s*$/,
+        /for\s+.*\s+in\s+range\s*\(\s*\d{7,}\s*\)/
       ]
     });
   }
@@ -218,35 +218,44 @@ except Exception as e:
 
   private async executePythonSubprocess(code: string, input?: string): Promise<any> {
     return new Promise(async (resolve, reject) => {
+      let tempFile: string | null = null;
+      let pythonProcess: any = null;
+      
       try {
         // Create a temporary file for the Python code
-        const tempFile = join(tmpdir(), `python_exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.py`);
+        tempFile = join(tmpdir(), `python_exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.py`);
         await writeFile(tempFile, code);
 
-        const pythonProcess = spawn('python3', [tempFile], {
+        pythonProcess = spawn('python3', [tempFile], {
           stdio: ['pipe', 'pipe', 'pipe']
         });
 
         let stdout = '';
         let stderr = '';
+        let isResolved = false;
 
-        pythonProcess.stdout.on('data', (data) => {
+        pythonProcess.stdout.on('data', (data: any) => {
           stdout += data.toString();
         });
 
-        pythonProcess.stderr.on('data', (data) => {
+        pythonProcess.stderr.on('data', (data: any) => {
           stderr += data.toString();
         });
 
-        pythonProcess.on('close', async (code) => {
+        pythonProcess.on('close', async (exitCode: any) => {
+          if (isResolved) return;
+          isResolved = true;
+          
           // Clean up temp file
-          try {
-            await unlink(tempFile);
-          } catch (e) {
-            // Ignore cleanup errors
+          if (tempFile) {
+            try {
+              await unlink(tempFile);
+            } catch (e) {
+              // Ignore cleanup errors
+            }
           }
 
-          if (code === 0) {
+          if (exitCode === 0) {
             // Parse output
             let output = '';
             let errorOutput = '';
@@ -268,12 +277,17 @@ except Exception as e:
           }
         });
 
-        pythonProcess.on('error', async (error) => {
+        pythonProcess.on('error', async (error: any) => {
+          if (isResolved) return;
+          isResolved = true;
+          
           // Clean up temp file
-          try {
-            await unlink(tempFile);
-          } catch (e) {
-            // Ignore cleanup errors
+          if (tempFile) {
+            try {
+              await unlink(tempFile);
+            } catch (e) {
+              // Ignore cleanup errors
+            }
           }
           reject(error);
         });
@@ -285,6 +299,14 @@ except Exception as e:
         pythonProcess.stdin.end();
 
       } catch (error) {
+        // Clean up temp file if it was created
+        if (tempFile) {
+          try {
+            await unlink(tempFile);
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+        }
         reject(error);
       }
     });
