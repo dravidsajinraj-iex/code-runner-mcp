@@ -34,9 +34,12 @@ RUN apk add --no-cache \
     tini \
     ca-certificates \
     && ln -sf python3 /usr/bin/python \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && pip3 install --no-cache-dir --upgrade pip --break-system-packages \
     && rm -rf /var/cache/apk/* \
-    && rm -rf /root/.cache
+    && rm -rf /root/.cache \
+    && which python3 && python3 --version
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S mcpuser && \
@@ -63,6 +66,8 @@ ENV NODE_DISABLE_COLORS=1
 # Ensure unbuffered I/O for proper MCP communication
 ENV PYTHONUNBUFFERED=1
 ENV NODE_UNBUFFERED=1
+# Ensure Python is in PATH
+ENV PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
 WORKDIR /app
 
@@ -73,6 +78,9 @@ RUN mkdir -p /app/tmp /app/logs && \
 
 # Switch to non-root user
 USER mcpuser
+
+# Verify Python is accessible for the non-root user
+RUN which python3 && python3 --version && echo "Python3 is accessible for mcpuser"
 
 # Install production dependencies
 RUN npm ci --ignore-scripts --omit=dev

@@ -233,16 +233,29 @@ except Exception as e:
     const { promisify } = await import('util');
     const execFile = promisify((await import('child_process')).execFile);
     
-    // List of possible Python executables to try
-    const pythonCandidates = ['python3', 'python', 'python3.12', 'python3.11', 'python3.10', 'python3.9'];
+    // List of possible Python executables to try (absolute paths first for Docker environments)
+    const pythonCandidates = [
+      '/usr/bin/python3',
+      '/usr/local/bin/python3',
+      '/usr/bin/python',
+      '/usr/local/bin/python',
+      'python3',
+      'python',
+      'python3.12',
+      'python3.11',
+      'python3.10',
+      'python3.9'
+    ];
     
     for (const candidate of pythonCandidates) {
       try {
         // Try to execute the candidate with --version to check if it exists and works
         await execFile(candidate, ['--version'], { timeout: 5000 });
+        console.log(`Found working Python executable: ${candidate}`);
         return candidate;
-      } catch (error) {
+      } catch (error: any) {
         // Continue to next candidate if this one fails
+        console.log(`Python candidate ${candidate} failed:`, error?.message || error);
         continue;
       }
     }
