@@ -1,5 +1,5 @@
 runtime: docker
 build:
-  dockerBuildPath: "../.."
+  dockerBuildPath: "."
 startCommand:
   type: "stdio"
