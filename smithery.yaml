@@ -1,4 +1,4 @@
-build:
-  dockerBuildPath: "."
-startCommand:
-  type: stdio
+# build:
+#   dockerBuildPath: "."
+# startCommand:
+#   type: stdio
